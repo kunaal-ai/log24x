@@ -22,3 +22,14 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+  
+  dashboard:
+    build:
+      context: ./dashboard
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./dashboard:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=https://localhost:8080

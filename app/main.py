@@ -3,6 +3,7 @@ import nest_asyncio
 nest_asyncio.apply()
 
 import os
+from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List
 from contextlib import asynccontextmanager
 import json
@@ -34,7 +35,13 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # For production, you'd specify http://localhost:5173
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 @app.get("/health")
 async def health_check():
     """Standard health check for K8s Liveness Probes"""
