@@ -1,1 +1,4 @@
 project-notes/
+.env
+__pycache__/
+*.pyc
