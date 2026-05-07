@@ -5,8 +5,12 @@ interface AuditLog {
   id: string
   timestamp: string
   verdict: string
+  trust_score: string
   score: number
   reasoning: string
+  prompt?: string
+  context?: string
+  actual_output?: string
 }
 
 function App() {
@@ -17,12 +21,12 @@ function App() {
     try {
       const response = await fetch('/v1/history')
       const data = await response.json()
-      setLogs(data.logs || [])
+      const items = data.logs || []
+      setLogs(items)
       
-      // Calculate stats for the Bento cards
-      const total = data.total_logs || 0
-      const fails = data.logs?.filter((l: AuditLog) => l.verdict === 'Fail').length || 0
-      const avg = data.logs?.reduce((acc: number, curr: AuditLog) => acc + curr.score, 0) / (data.logs?.length || 1)
+      const total = items.length
+      const fails = items.filter((l: AuditLog) => l.verdict === 'Fail').length
+      const avg = items.reduce((acc: number, curr: AuditLog) => acc + parseFloat(curr.trust_score || '0'), 0) / (items.length || 1)
       
       setStats({ total, fails, avgScore: Number(avg.toFixed(2)) })
     } catch (error) {
@@ -58,64 +62,64 @@ function App() {
       </div>
 
       {/* Main Audit Feed */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+      <div>
+        <div className="mb-6 flex justify-between items-center">
           <h2 className="font-semibold italic">Live Audit Stream</h2>
           <Clock size={16} className="text-slate-400" />
         </div>
-        <div className="divide-y divide-slate-50">
-          {logs.map((log) => (
-            <div key={log.id} className="p-6 hover:bg-slate-50 transition-colors border-b border-slate-50">
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-mono text-slate-400 bg-slate-100 px-2 py-1 rounded">
-                    {new Date(log.timestamp).toLocaleTimeString()}
-                  </span>
-                  <div className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-bold ${
-                    log.verdict === 'Pass' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                  }`}>
-                    {log.verdict} (Score: {log.score})
-                  </div>
-                </div>
-                <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">
-                  Ref ID: {log.id.slice(0,8)}
-                </div>
+        {logs.map((log) => (
+          <div key={log.id} className="mb-6 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
+            <div className={`px-6 py-3 flex justify-between items-center border-b ${
+              log.verdict === 'Pass' ? 'bg-green-50/50 border-green-100' : 'bg-red-50/50 border-red-100'
+            }`}>
+              <div className="flex items-center gap-4">
+                <span className={`text-xs font-bold px-2 py-1 rounded-md ${
+                  log.verdict === 'Pass' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                }`}>
+                  {log.verdict.toUpperCase()}
+                </span>
+                <span className="text-xs font-mono text-slate-400">{new Date(log.timestamp).toLocaleTimeString()}</span>
               </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <p className="text-xs font-bold text-slate-400 uppercase mb-1">Automated Reasoning</p>
-                  <p className="text-sm text-slate-600 leading-relaxed italic">
-                    "{log.reasoning}"
-                  </p>
-                </div>
-
-                <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
-                  <p className="text-xs font-bold text-slate-400 uppercase mb-2">Technical Audit</p>
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-xs">
-                      <span>Contradiction Detected:</span>
-                      <span className={log.score < 1 ? "text-red-600 font-bold" : "text-green-600"}>
-                        {log.score < 1 ? "YES" : "NO"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span>Accuracy Threshold:</span>
-                      <span>0.80</span>
-                    </div>
-                    <div className="w-full bg-slate-200 h-1.5 rounded-full mt-2">
-                      <div
-                        className={`h-1.5 rounded-full ${log.score > 0.8 ? 'bg-green-500' : 'bg-red-500'}`}
-                        style={{ width: `${log.score * 100}%` }}
-                      />
-                    </div>
-                  </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-slate-700">Trust Score: {parseFloat(log.trust_score || '0') * 100}%</span>
+                <div className="w-24 bg-slate-200 h-2 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full ${parseFloat(log.trust_score || '0') > 0.8 ? 'bg-green-500' : 'bg-red-500'}`}
+                    style={{ width: `${parseFloat(log.trust_score || '0') * 100}%` }}
+                  />
                 </div>
               </div>
             </div>
-          ))}
-          {logs.length === 0 && <p className="p-10 text-center text-slate-400">No audits found in Redis.</p>}
-        </div>
+
+            <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+              <div className="space-y-2">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ground Truth (Context)</p>
+                <div className="p-3 bg-slate-50 rounded-lg border border-slate-100 text-sm text-slate-600 min-h-[80px]">
+                  {log.context || "No context provided"}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Model Output</p>
+                <div className={`p-3 rounded-lg border text-sm min-h-[80px] ${
+                  log.verdict === 'Pass' ? 'bg-white border-slate-100 text-slate-600' : 'bg-red-50 border-red-100 text-red-900 font-medium'
+                }`}>
+                  {log.actual_output || "No output provided"}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Audit Reasoning</p>
+                <div className="text-sm text-slate-500 leading-relaxed italic">
+                  "{log.reasoning}"
+                </div>
+              </div>
+
+            </div>
+          </div>
+        ))}
+        {logs.length === 0 && <p className="p-10 text-center text-slate-400">No audits found in Redis.</p>}
       </div>
     </div>
   )

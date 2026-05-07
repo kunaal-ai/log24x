@@ -13,6 +13,8 @@ class AuditRequest(BaseModel):
 class AuditResponse(BaseModel):
     # specifies what API will RETURN
     trust_score: float = Field(..., description="Score from 0.0 to 1.0 (1.0 is perfect)")
+    gemini_score: float
+    groq_score: float 
     is_hallucination: bool
     reasoning: Optional[str] = Field(None, description="Explanation from the Judge LLM")
     verdict: str = Field(..., description="Pass or Fail based on threshold (0.8)")
