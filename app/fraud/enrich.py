@@ -67,12 +67,20 @@ def enrich_dataframe(df: pd.DataFrame, rng: np.random.Generator) -> pd.DataFrame
     legit = ~is_fraud
 
     account_id = np.empty(n, dtype=object)
-    account_id[legit] = np.array([f"ACC-{int(x) + 1:04d}" for x in rng.integers(0, 800, size=int(legit.sum()))])
+    # Legitimate rows use ACC-0041–ACC-0800 only so fraud-only accounts (ACC-0001–ACC-0040) stay
+    # interpretable for typologies like international-activity spikes.
+    account_id[legit] = np.array([f"ACC-{int(x) + 1:04d}" for x in rng.integers(40, 800, size=int(legit.sum()))])
     account_id[is_fraud] = np.array(
         [f"ACC-{int(x) + 1:04d}" for x in rng.integers(0, 40, size=int(is_fraud.sum()))]
     )
 
     amounts = df["Amount"].astype("float64").to_numpy()
+    amount_usd = np.round(amounts, 2)
+    # Rare real amounts in the $8k–$9.9k band are spread across accounts; cluster them so
+    # structuring-style monitoring can surface on this dataset without changing row count.
+    struct_mask = (amount_usd >= 8000) & (amount_usd <= 9900)
+    account_id[struct_mask] = "ACC-0800"
+
     merchant_name = np.empty(n, dtype=object)
     transaction_type = np.empty(n, dtype=object)
     location = np.empty(n, dtype=object)
@@ -81,8 +89,6 @@ def enrich_dataframe(df: pd.DataFrame, rng: np.random.Generator) -> pd.DataFrame
         merchant_name[i] = _pick_merchant(float(amounts[i]), fraud_row, rng)
         transaction_type[i] = _pick_txn_type(fraud_row, rng)
         location[i] = _pick_location(fraud_row, rng)
-
-    amount_usd = np.round(amounts, 2)
 
     v_cols = sorted((c for c in df.columns if c.startswith("V")), key=lambda x: int(x[1:]))
     out = pd.DataFrame(

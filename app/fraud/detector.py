@@ -35,13 +35,16 @@ def detect_structuring(df: pd.DataFrame) -> pd.DataFrame:
     bad_accounts: set[str] = set()
     for acc, g in band.groupby("account_id", sort=False):
         g = g.sort_values("_ts")
-        for _, row in g.iterrows():
-            t = row["_ts"]
-            if pd.isna(t):
+        tseg = g["_ts"].to_numpy(dtype="datetime64[ns]")
+        if len(tseg) < 3:
+            continue
+        for i in range(len(tseg)):
+            t = tseg[i]
+            if np.datetime64("nat") == t:
                 continue
-            lo = t - pd.Timedelta(hours=24)
-            cnt = int(((g["_ts"] > lo) & (g["_ts"] <= t)).sum())
-            if cnt >= 3:
+            left = t - np.timedelta64(24, "h")
+            k = int(np.searchsorted(tseg, left, side="right"))
+            if i - k + 1 >= 3:
                 bad_accounts.add(str(acc))
                 break
 
@@ -61,18 +64,40 @@ def detect_rapid_movement(df: pd.DataFrame) -> pd.DataFrame:
     """Debit outflow >85% of credit inflow in a rolling 48h window, with credit > $5k."""
     work = df.copy()
     work["_ts"] = _parse_ts(work["timestamp"])
+    work = work.sort_values(["account_id", "_ts"], kind="mergesort")
+    idx_all = work.index.to_numpy()
+    acc_all = work["account_id"].to_numpy()
+    times_all = work["_ts"].to_numpy(dtype="datetime64[ns]")
+    types_all = work["transaction_type"].to_numpy()
+    amt_all = work["amount_usd"].astype(float).to_numpy()
+
     flagged_rows: list[int] = []
-    for _, g in work.groupby("account_id", sort=False):
-        g = g.sort_values("_ts")
-        for idx, row in g.iterrows():
-            t = row["_ts"]
-            if pd.isna(t):
+    n = len(work)
+    start = 0
+    while start < n:
+        end = start + 1
+        a0 = acc_all[start]
+        while end < n and acc_all[end] == a0:
+            end += 1
+        times = times_all[start:end]
+        deb = np.where(types_all[start:end] == "DEBIT", amt_all[start:end], 0.0)
+        cred = np.where(types_all[start:end] == "CREDIT", amt_all[start:end], 0.0)
+        deb_ps = np.cumsum(deb)
+        cred_ps = np.cumsum(cred)
+        j = 0
+        m = end - start
+        for i in range(m):
+            t = times[i]
+            if np.datetime64("nat") == t:
                 continue
-            win = g[(g["_ts"] > t - pd.Timedelta(hours=48)) & (g["_ts"] <= t)]
-            deb = float(win.loc[win["transaction_type"] == "DEBIT", "amount_usd"].astype(float).sum())
-            cred = float(win.loc[win["transaction_type"] == "CREDIT", "amount_usd"].astype(float).sum())
-            if cred > 5000 and deb / cred > 0.85:
-                flagged_rows.append(idx)
+            left = t - np.timedelta64(48, "h")
+            while j <= i and times[j] <= left:
+                j += 1
+            deb_sum = deb_ps[i] - (deb_ps[j - 1] if j > 0 else 0.0)
+            cred_sum = cred_ps[i] - (cred_ps[j - 1] if j > 0 else 0.0)
+            if cred_sum > 5000 and deb_sum / cred_sum > 0.85:
+                flagged_rows.append(int(idx_all[start + i]))
+        start = end
 
     if not flagged_rows:
         return pd.DataFrame()
@@ -130,16 +155,29 @@ def detect_velocity(df: pd.DataFrame) -> pd.DataFrame:
     """More than eight transactions in any rolling one-hour window."""
     work = df.copy()
     work["_ts"] = _parse_ts(work["timestamp"])
+    work = work.sort_values(["account_id", "_ts"], kind="mergesort")
+    idx_all = work.index.to_numpy()
+    acc_all = work["account_id"].to_numpy()
+    times_all = work["_ts"].to_numpy(dtype="datetime64[ns]")
+
     flagged_rows: list[int] = []
-    for _, g in work.groupby("account_id", sort=False):
-        g = g.sort_values("_ts")
-        for idx, row in g.iterrows():
-            t = row["_ts"]
-            if pd.isna(t):
+    n = len(work)
+    start = 0
+    while start < n:
+        end = start + 1
+        a0 = acc_all[start]
+        while end < n and acc_all[end] == a0:
+            end += 1
+        sub = times_all[start:end]
+        for i in range(len(sub)):
+            t = sub[i]
+            if np.datetime64("nat") == t:
                 continue
-            win = g[(g["_ts"] > t - pd.Timedelta(hours=1)) & (g["_ts"] <= t)]
-            if len(win) > 8:
-                flagged_rows.append(idx)
+            left = t - np.timedelta64(1, "h")
+            k = int(np.searchsorted(sub, left, side="right"))
+            if i - k + 1 > 8:
+                flagged_rows.append(int(idx_all[start + i]))
+        start = end
 
     if not flagged_rows:
         return pd.DataFrame()
