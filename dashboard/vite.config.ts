@@ -11,6 +11,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/v1': 'http://localhost:8000',
+      '/fraud': 'http://localhost:8000',
     },
   },
 })
