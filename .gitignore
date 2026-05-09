@@ -1,4 +1,9 @@
 project-notes/
+.venv/
 .env
 __pycache__/
 *.pyc
+
+# Fraud module datasets (large / local)
+data/creditcard.csv
+data/creditcard_enriched.csv
