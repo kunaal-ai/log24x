@@ -59,6 +59,7 @@ class ExplainResponse(BaseModel):
 
 
 class FraudStats(BaseModel):
+    total_analyzed: int = 0
     total_alerts: int
     by_risk_label: dict[str, int]
     by_rule: dict[str, int]
@@ -239,14 +240,17 @@ async def get_stats(request: Request):
 
     if df.empty:
         ts = ""
+        total_analyzed = 0
         try:
             raw_summary = await redis.get(REDIS_SUMMARY_KEY)
             if raw_summary:
                 s = json.loads(raw_summary)
                 ts = str(s.get("analysis_timestamp", ""))
+                total_analyzed = int(s.get("total_analyzed") or 0)
         except Exception:
             pass
         return FraudStats(
+            total_analyzed=total_analyzed,
             total_alerts=0,
             by_risk_label={},
             by_rule={},
@@ -280,7 +284,10 @@ async def get_stats(request: Request):
     if not ts and "flagged_at" in df.columns:
         ts = df["flagged_at"].max()
 
+    total_analyzed = int(summary.get("total_analyzed") or 0)
+
     return FraudStats(
+        total_analyzed=total_analyzed,
         total_alerts=total_alerts,
         by_risk_label=by_risk,
         by_rule=by_rule,

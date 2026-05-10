@@ -1,55 +1,73 @@
-# log24x: Fraud Transaction Intelligence Suite
+# log24x — Fraud Transaction Intelligence Suite
 
-log24x is a fraud detection and analysis workbench that pairs deterministic, rule-based transaction monitoring with AI-generated explanations. The backend is FastAPI and pandas; the frontend is React with TypeScript; and analyst-style narratives are produced with Google Gemini. The experience is intentionally close to real fraud operations: triage an alert queue, understand risk scoring, and read plain English investigation briefings per transaction.
+I built this because most fraud monitoring systems just flag a transaction and slap a score on it. They don't tell you *why* it looks suspicious. Analysts end up manually digging through raw data hundreds of times a day to figure out what's actually going on.
 
-## The Problem it Solves
+log24x fixes that. It runs 5 rule-based fraud detection checks against transaction data and then uses Google Gemini to generate plain English investigation briefings for each flagged alert — written like a senior fraud analyst would write them. Upload a CSV, get an alert queue sorted by risk, click any alert and read an AI-generated summary of what looks off and what to investigate next.
 
-Fraud analysts routinely work through hundreds of alerts per shift, yet many monitoring tools stop at a score or a rule code with little narrative context. That friction slows prioritization and makes it harder to explain decisions to partners and compliance stakeholders. This project adds an explanation layer on top of classic rules: each flagged transaction can be summarized in clear language so analysts can decide what to escalate first. The goal is faster, more confident review without replacing human judgment.
+![Analysis summary showing 284,807 transactions analyzed with 206,671 alerts across risk levels](screenshots/summary.png)
+
+## What It Does
+
+1. **Enriches raw transaction data** — takes the Kaggle credit card fraud dataset and adds account IDs, merchant names, locations, and timestamps so it looks like real bank data
+2. **Runs 5 fraud detection rules** — each one maps to a real fraud typology that actual fraud teams monitor for
+3. **Scores and labels every alert** — based on how many rules fired on the same transaction
+4. **Generates AI investigation notes** — Gemini writes 3-5 sentence briefings from the perspective of a senior analyst, cached in Redis so repeat views are instant
+5. **Displays everything in a dashboard** — alert queue, risk charts, filter by rule or risk level, click-to-explain
 
 ## Fraud Detection Rules
 
-| Rule Name | Fraud Typology | Description |
-| --- | --- | --- |
-| STRUCTURING | Structuring / threshold avoidance | Flags accounts with multiple $8k–$9.9k transactions inside a rolling 24-hour window. |
-| RAPID_MOVEMENT | Money mule / funneling | Flags accounts where debits drain more than 85% of recent credits within 48 hours when credits exceed $5k. |
-| INTL_SPIKE | Geographic anomaly | Flags accounts that suddenly show international spend versus a mostly domestic history. |
-| ROUND_AMOUNT | Wire / manual fraud pattern | Flags large transactions on exact thousand-dollar amounts (e.g., $10,000). |
-| HIGH_VELOCITY | Burst / bot-like activity | Flags accounts with more than eight transactions in any rolling one-hour window. |
+Each rule targets a specific fraud pattern. These aren't made up — they reflect what real transaction monitoring systems flag.
 
-## How the AI Explanation Works
+### STRUCTURING — Threshold Avoidance
+Banks have to report transactions over $10,000 to FinCEN. Criminals know this and split large amounts into chunks just under the limit. This rule flags accounts with 3+ transactions between $8,000 and $9,900 within any 24-hour window. Structuring is a federal crime on its own, regardless of where the money came from.
 
-When you open an alert, the API sends Gemini the full transaction context—amount, merchant, location, timestamp, transaction type, every rule that fired, and the computed risk score/label—and asks for a short, senior-analyst-style briefing. Successful responses are cached in Redis under `fraud:explain:{transaction_id}` with TTL from `FRAUD_CACHE_TTL`, so repeat views avoid redundant model calls.
+### RAPID_MOVEMENT — Money Mule Detection
+Money mules receive stolen funds into their account, keep a small cut, and send the rest somewhere else. The pattern is simple: big credits in, almost-equal debits out, fast. This rule flags accounts where outbound debits consume more than 85% of inbound credits within 48 hours, but only when credits exceed $5,000 to filter out normal small-account activity.
 
-## Tech Stack
+### INTL_SPIKE — Geographic Anomaly
+If an account has been mostly domestic for its entire history and suddenly starts transacting in Lagos, Kiev, and Bucharest in the same week — that's a red flag. This rule flags accounts where international transactions jump above 30% of total activity, with minimum thresholds (5+ total transactions, 2+ international) to avoid false positives on new accounts.
 
-| Layer | Technology |
-| --- | --- |
-| Backend API | Python 3.12, FastAPI, Uvicorn |
-| Data processing | pandas, NumPy |
-| AI | Google Gemini (`google-genai`), Groq (existing audit path) |
-| Caching | Redis 7 (via `redis-py` asyncio) |
-| Frontend | React 19, TypeScript, Vite, Tailwind CSS |
-| Containerization | Docker, docker-compose |
+### ROUND_AMOUNT — Wire Fraud Indicator
+Legitimate purchases are rarely exactly $10,000.00 or $15,000.00. But manually typed wire transfers often are. This rule flags any transaction at $5,000 or above that lands on an exact thousand-dollar amount. Simple check, but it catches a surprising number of manually staged fraud transfers in practice.
 
-## How to Run
+### HIGH_VELOCITY — Bot and Burst Activity
+Normal people don't make 8+ transactions in a single hour. Card testing attacks, automated fraud scripts, and compromised point-of-sale terminals can. This rule flags accounts that exceed 8 transactions in any rolling 1-hour window.
 
-1. Clone this repository.
-2. Download the [Kaggle Credit Card Fraud Detection](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) dataset and place `creditcard.csv` under `data/creditcard.csv` at the repo root.
-3. Copy `.env.example` to `.env` and fill in `GOOGLE_API_KEY`, `GROQ_API_KEY`, and `REDIS_URL` (the defaults work with docker-compose Redis).
-4. Build and start services: `docker-compose build` then `docker-compose up`.
-5. Generate enriched data (one-time): `python app/fraud/enrich.py` (from the repo root; requires the Kaggle CSV).
-6. Start the dashboard dev server from `dashboard/` with `npm install` and `npm run dev` (proxies `/v1` and `/fraud` to `http://localhost:8000`).
-7. Open `http://localhost:5173`, choose **Fraud Intelligence**, and upload `data/creditcard_enriched.csv` to run the full detection + review flow.
+## Risk Scoring
 
-For API-only testing, `POST /fraud/analyze` accepts the enriched CSV; use `GET /docs` to explore the **Fraud Intelligence** tag.
+When the rules run, a single transaction can trigger multiple rules at once. More rules firing = higher confidence something is wrong.
 
-## Dataset
+| Rules Fired | Score | Label |
+|---|---|---|
+| 1 rule | 30 | `LOW` |
+| 2 rules | 60 | `MEDIUM` |
+| 3+ rules | 90 | `HIGH` |
+| Known fraud (ground truth) | 100 | `CONFIRMED_FRAUD` |
 
-Raw transaction features come from the public [Credit Card Fraud Detection](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) dataset (ULB). Fields `V1`–`V28` are PCA-transformed and anonymized. Merchant names, locations, account identifiers, and transaction metadata in the enriched file are **synthetic** but the original `Class` fraud labels are preserved for evaluation and demo scenarios.
+The `CONFIRMED_FRAUD` label comes from the original Kaggle dataset's fraud labels — these are transactions that were actually confirmed as fraudulent. This lets you measure how well the rules perform against known outcomes.
 
-[Screenshot: fraud dashboard showing alert queue and AI explanation panel] — replace this line with an actual screenshot after your first successful run.
+![Stats dashboard showing alerts by rule, risk label donut chart, and top flagged accounts](screenshots/dashboard.png)
 
-## Verification commands
+## AI-Generated Investigation Briefings
 
-- `python tests/test_detector.py` — rule engine smoke test (requires `data/creditcard_enriched.csv`).
-- `python tests/test_explainer.py` — Gemini + Redis cache latency check (requires Redis, `GOOGLE_API_KEY`, and enriched data).
+![Alert queue with rule filter dropdown, showing flagged transactions with risk scores and labels](screenshots/detailed.png)
+
+When you click an alert in the dashboard, the system sends the full transaction context to Google Gemini — amount, merchant, location, timestamp, which rules fired, and the risk score — and asks it to write a short investigation note.
+
+The prompt tells Gemini to write like a senior fraud analyst briefing a junior analyst. Not a formal report, not bullet points. Direct, specific, actionable. Something like:
+
+> *"The three wire transfers to international payment services totaling $27,400 within 18 hours, all from an account with no prior international activity, strongly suggest a structuring pattern combined with geographic anomaly. I'd pull the full 90-day history on this account and check if the beneficiary accounts have any existing SARs filed against them."*
+
+Explanations are cached so you're not making an API call every time someone reopens the same alert.
+
+## The Dataset
+
+Built on the [Kaggle Credit Card Fraud Detection](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) dataset — 284,807 real credit card transactions with 492 confirmed fraud cases. The raw features (V1–V28) are PCA-anonymized for privacy.
+
+I wrote an enrichment layer that adds realistic metadata (accounts, merchants, locations) on top of the original data while preserving the real fraud labels. The enrichment is designed so the fraud patterns are actually detectable by the rules — fraud transactions cluster on a small set of accounts, lean toward suspicious merchant types, and show international locations at higher rates. This mirrors how fraud actually distributes in real transaction data.
+
+---
+
+📂 **[Setup & Running Instructions](docs/SETUP.md)** — how to get everything running locally
+
+🔧 **[Architecture & Technical Details](docs/ARCHITECTURE.md)** — API endpoints, code structure, detection engine design, caching strategy, dashboard components

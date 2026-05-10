@@ -5,10 +5,14 @@ Uses the same google-genai client pattern as the rest of the app.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from typing import Any
 
 from google import genai
+from google.genai import types
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """
 You are a senior fraud analyst at a bank reviewing flagged transactions.
@@ -22,6 +26,9 @@ points. Do not start with 'This transaction'. Be direct and specific.
 FALLBACK = (
     "Automated explanation temporarily unavailable. Review transaction details and triggered rules manually."
 )
+
+# Match TruthCheckService default; override with FRAUD_GEMINI_MODEL in .env.
+_DEFAULT_MODEL = "gemini-2.5-flash"
 
 
 def build_prompt(txn: dict) -> str:
@@ -53,6 +60,51 @@ def _txn_cache_key(transaction_id: str) -> str:
     return f"fraud:explain:{transaction_id}"
 
 
+def _fraud_explain_config() -> types.GenerateContentConfig:
+    """Slightly looser safety thresholds — fraud narratives are often classified as sensitive."""
+    return types.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT.strip(),
+        safety_settings=[
+            types.SafetySetting(
+                category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            ),
+            types.SafetySetting(
+                category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            ),
+            types.SafetySetting(
+                category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            ),
+            types.SafetySetting(
+                category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                threshold=types.HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            ),
+        ],
+    )
+
+
+def _log_empty_or_blocked_response(response: types.GenerateContentResponse, model: str) -> None:
+    parts: list[str] = [f"model={model}"]
+    try:
+        pf = getattr(response, "prompt_feedback", None)
+        if pf is not None:
+            parts.append(f"prompt_feedback={pf}")
+        cands = getattr(response, "candidates", None) or []
+        if not cands:
+            parts.append("candidates=[]")
+        else:
+            c0 = cands[0]
+            parts.append(f"finish_reason={getattr(c0, 'finish_reason', None)}")
+            sr = getattr(c0, "safety_ratings", None)
+            if sr is not None:
+                parts.append(f"safety_ratings={sr}")
+    except Exception as exc:
+        parts.append(f"debug_parse_error={exc}")
+    logger.warning("Fraud explainer: no usable text from Gemini (%s)", "; ".join(parts))
+
+
 async def explain_transaction(redis: Any, txn: dict) -> tuple[str, bool]:
     """
     Returns (explanation, cached_bool).
@@ -67,20 +119,29 @@ async def explain_transaction(redis: Any, txn: dict) -> tuple[str, bool]:
     if cached:
         return str(cached), True
 
-    model = os.getenv("FRAUD_GEMINI_MODEL", "gemini-2.0-flash")
-    api_key = os.getenv("GOOGLE_API_KEY")
-    user_block = build_prompt(txn)
-    full_prompt = f"{SYSTEM_PROMPT.strip()}\n\n{user_block.strip()}"
+    model = (os.getenv("FRAUD_GEMINI_MODEL") or _DEFAULT_MODEL).strip()
+    api_key = (os.getenv("GOOGLE_API_KEY") or "").strip()
+    user_message = build_prompt(txn).strip()
+    config = _fraud_explain_config()
 
     try:
         if not api_key:
+            logger.warning("Fraud explainer skipped: GOOGLE_API_KEY is not set")
             return FALLBACK, False
 
         client = genai.Client(api_key=api_key)
 
         def _call() -> str:
-            response = client.models.generate_content(model=model, contents=full_prompt)
-            return (response.text or "").strip()
+            response = client.models.generate_content(
+                model=model,
+                contents=user_message,
+                config=config,
+            )
+            text = (response.text or "").strip()
+            if text:
+                return text
+            _log_empty_or_blocked_response(response, model)
+            return ""
 
         text = await asyncio.to_thread(_call)
         if not text:
@@ -90,7 +151,8 @@ async def explain_transaction(redis: Any, txn: dict) -> tuple[str, bool]:
         except Exception:
             pass
         return text, False
-    except Exception:
+    except Exception as e:
+        logger.warning("Fraud explainer Gemini call failed (model=%s): %s", model, e, exc_info=True)
         return FALLBACK, False
 
 

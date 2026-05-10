@@ -24,6 +24,7 @@ export interface FraudAnalysisSummary {
 }
 
 interface FraudStats {
+  total_analyzed?: number
   total_alerts: number
   by_risk_label: Record<string, number>
   by_rule: Record<string, number>
@@ -557,6 +558,33 @@ export default function FraudDashboard() {
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [risk, setRisk] = useState<string>('All')
   const [rule, setRule] = useState<string>('All')
+
+  // If Redis still has a recent analysis (e.g. user navigated away and back), restore summary UI without re-upload.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch('/fraud/stats')
+        if (!res.ok || cancelled) return
+        const s = (await res.json()) as FraudStats
+        setAnalysisResult((prev) => {
+          if (prev) return prev
+          return {
+            total_analyzed: s.total_analyzed ?? 0,
+            total_flagged: s.total_alerts ?? 0,
+            by_rule: s.by_rule ?? {},
+            by_risk_label: s.by_risk_label ?? {},
+            alerts: [],
+          }
+        })
+      } catch {
+        /* no session on server */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const enabled = analysisResult !== null
   const statsRefreshKey = analysisResult

@@ -11,7 +11,10 @@ export default defineConfig({
   server: {
     proxy: {
       '/v1': 'http://localhost:8000',
-      '/fraud': 'http://localhost:8000',
+      // Proxy API paths only — not GET /fraud (that must serve the SPA for client-side routing).
+      '/fraud/analyze': 'http://localhost:8000',
+      '/fraud/alerts': 'http://localhost:8000',
+      '/fraud/stats': 'http://localhost:8000',
     },
   },
 })
