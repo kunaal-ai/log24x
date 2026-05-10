@@ -14,6 +14,8 @@ log24x fixes that. It runs 5 rule-based fraud detection checks against transacti
 4. **Generates AI investigation notes** — Gemini writes 3-5 sentence briefings from the perspective of a senior analyst, cached in Redis so repeat views are instant
 5. **Displays everything in a dashboard** — alert queue, risk charts, filter by rule or risk level, click-to-explain
 
+![Alert queue showing flagged transactions with rule tags and risk labels](screenshots/detailed.png)
+
 ## Fraud Detection Rules
 
 Each rule targets a specific fraud pattern. These aren't made up — they reflect what real transaction monitoring systems flag.
@@ -48,9 +50,11 @@ The `CONFIRMED_FRAUD` label comes from the original Kaggle dataset's fraud label
 
 ![Stats dashboard showing alerts by rule, risk label donut chart, and top flagged accounts](screenshots/dashboard.png)
 
+![Individual alert detail panel showing transaction metadata, risk score, and confirmed fraud label](screenshots/Alert%20details.png)
+
 ## AI-Generated Investigation Briefings
 
-![Alert queue with rule filter dropdown, showing flagged transactions with risk scores and labels](screenshots/detailed.png)
+![Structured AI Fraud Analysis report with Summary, Typology, and Investigation steps](screenshots/AI%20fraud%20Analysis.png)
 
 When you click an alert in the dashboard, the system sends the full transaction context to Google Gemini — amount, merchant, location, timestamp, which rules fired, and the risk score — and asks it to write a short investigation note.
 

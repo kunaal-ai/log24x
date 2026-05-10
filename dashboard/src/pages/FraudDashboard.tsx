@@ -533,9 +533,16 @@ function ExplainPanel(props: {
                 Generating explanation...
               </div>
             ) : (
-              <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
-                {data?.ai_explanation ?? '—'}
-              </p>
+              <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
+                {(data?.ai_explanation ?? '—').split('\n').map((line, i) => {
+                  const isHeader = line === line.toUpperCase() && line.trim().length > 0 && !line.startsWith('•');
+                  return (
+                    <div key={i} className={isHeader ? 'font-bold text-slate-900 mt-3 first:mt-0 text-[10px] tracking-widest uppercase' : ''}>
+                      {line}
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
 
