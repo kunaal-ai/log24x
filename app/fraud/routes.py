@@ -52,10 +52,29 @@ class FraudAnalysisSummary(BaseModel):
     alerts: list[TransactionAlert]
 
 
+class LayerResultSchema(BaseModel):
+    passed: bool | None = None
+    score: float | None = None
+    detail: str = ""
+
+
+class ValidationResultSchema(BaseModel):
+    overall_confidence: str = "MEDIUM"
+    faithfulness: LayerResultSchema = Field(default_factory=LayerResultSchema)
+    relevancy: LayerResultSchema = Field(default_factory=LayerResultSchema)
+    hallucination: LayerResultSchema = Field(default_factory=LayerResultSchema)
+    grok_agreement: LayerResultSchema = Field(default_factory=LayerResultSchema)
+    rule_grounding: LayerResultSchema = Field(default_factory=LayerResultSchema)
+    final_badge: str = "UNVERIFIED"
+    grok_explanation: str | None = None
+
+
 class ExplainResponse(BaseModel):
     transaction_id: str
     ai_explanation: str
     cached: bool
+    confidence: str = "MEDIUM"
+    validation: ValidationResultSchema | None = None
 
 
 class FraudStats(BaseModel):
@@ -224,8 +243,41 @@ async def explain_alert(request: Request, transaction_id: str):
         "risk_label": str(row["risk_label"]),
     }
 
-    expl, was_cached = await explain_transaction(redis, txn)
-    return ExplainResponse(transaction_id=str(transaction_id), ai_explanation=expl, cached=was_cached)
+    expl, was_cached, confidence = await explain_transaction(redis, txn)
+
+    val_cache_key = f"fraud:validate:{transaction_id}"
+    try:
+        cached_val = await redis.get(val_cache_key)
+    except Exception:
+        cached_val = None
+
+    if cached_val:
+        validation = ValidationResultSchema(**json.loads(cached_val))
+    else:
+        from app.fraud.validator import validate_explanation
+        import dataclasses
+        import os
+        import asyncio
+
+        # Run validation in a background thread so DeepEval's internal asyncio 
+        # doesn't conflict with FastAPI's uvloop
+        val_result = await asyncio.to_thread(validate_explanation, expl, confidence, txn)
+        
+        val_dict = dataclasses.asdict(val_result)
+        try:
+            ttl = int(os.getenv("FRAUD_CACHE_TTL", "86400"))
+            await redis.set(val_cache_key, json.dumps(val_dict), ex=ttl)
+        except Exception:
+            pass
+        validation = ValidationResultSchema(**val_dict)
+
+    return ExplainResponse(
+        transaction_id=str(transaction_id), 
+        ai_explanation=expl, 
+        cached=was_cached,
+        confidence=confidence,
+        validation=validation
+    )
 
 
 @router.get("/stats", response_model=FraudStats)

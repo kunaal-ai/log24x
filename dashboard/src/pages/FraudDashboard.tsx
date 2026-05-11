@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Brain, Loader2, ShieldAlert, X } from 'lucide-react'
+import { Brain, Loader2, ShieldAlert, X, CheckCircle2, AlertTriangle, HelpCircle, ChevronDown, ChevronRight, Check, Minus } from 'lucide-react'
 
 export interface TransactionAlert {
   transaction_id: string
@@ -32,10 +32,29 @@ interface FraudStats {
   analysis_timestamp: string
 }
 
+interface LayerResult {
+  passed: boolean | null
+  score: number | null
+  detail: string
+}
+
+interface ValidationResult {
+  overall_confidence: string
+  faithfulness: LayerResult
+  relevancy: LayerResult
+  hallucination: LayerResult
+  grok_agreement: LayerResult
+  rule_grounding: LayerResult
+  final_badge: string
+  grok_explanation: string | null
+}
+
 interface ExplainResponse {
   transaction_id: string
   ai_explanation: string
   cached: boolean
+  confidence: string
+  validation: ValidationResult | null
 }
 
 const RISK_OPTIONS = ['All', 'CONFIRMED_FRAUD', 'HIGH', 'MEDIUM', 'LOW'] as const
@@ -432,6 +451,7 @@ function ExplainPanel(props: {
 }) {
   const [data, setData] = useState<ExplainResponse | null>(null)
   const [loading, setLoading] = useState(false)
+  const [showDetails, setShowDetails] = useState(false)
 
   useEffect(() => {
     if (!props.row) {
@@ -542,6 +562,99 @@ function ExplainPanel(props: {
                     </div>
                   );
                 })}
+              </div>
+            )}
+            
+            {data && !loading && (
+              <div className="mt-4 pt-4 border-t border-slate-200 space-y-3">
+                <div className="flex items-center gap-3">
+                  {/* Confidence Badge */}
+                  <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${
+                    data.confidence === 'HIGH' ? 'bg-emerald-100 text-emerald-800' :
+                    data.confidence === 'MEDIUM' ? 'bg-amber-100 text-amber-800' :
+                    'bg-slate-200 text-slate-700'
+                  }`}>
+                    AI Confidence: {data.confidence}
+                  </div>
+                  
+                  {/* Validation Badge */}
+                  {data.validation && (
+                    <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${
+                      data.validation.final_badge === 'VERIFIED' ? 'bg-emerald-100 text-emerald-800' :
+                      data.validation.final_badge === 'REVIEW_NEEDED' ? 'bg-amber-100 text-amber-800' :
+                      'bg-slate-200 text-slate-700'
+                    }`}>
+                      {data.validation.final_badge === 'VERIFIED' && <CheckCircle2 size={14} />}
+                      {data.validation.final_badge === 'REVIEW_NEEDED' && <AlertTriangle size={14} />}
+                      {data.validation.final_badge === 'UNVERIFIED' && <HelpCircle size={14} />}
+                      {data.validation.final_badge}
+                    </div>
+                  )}
+                </div>
+
+                {data.validation && (
+                  <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+                    <button 
+                      onClick={() => setShowDetails(!showDetails)}
+                      className="w-full flex items-center justify-between p-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      <span>View Validation Details</span>
+                      {showDetails ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </button>
+                    
+                    {showDetails && (
+                      <div className="border-t border-slate-200">
+                        <table className="w-full text-left text-[11px] text-slate-600">
+                          <thead className="bg-slate-50 border-b border-slate-200">
+                            <tr>
+                              <th className="px-2 py-1.5 font-semibold">Layer</th>
+                              <th className="px-2 py-1.5 font-semibold text-center w-12">Result</th>
+                              <th className="px-2 py-1.5 font-semibold text-center w-12">Score</th>
+                              <th className="px-2 py-1.5 font-semibold">Detail</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {[
+                              { label: 'Factual Accuracy', result: data.validation.faithfulness },
+                              { label: 'Topic Relevance', result: data.validation.relevancy },
+                              { label: 'Hallucination Check', result: data.validation.hallucination },
+                              { label: 'Second Opinion', result: data.validation.grok_agreement },
+                              { label: 'Pattern Match', result: data.validation.rule_grounding }
+                            ].map((layer, idx) => (
+                              <tr key={idx}>
+                                <td className="px-2 py-1.5 font-medium whitespace-nowrap">{layer.label}</td>
+                                <td className="px-2 py-1.5 text-center">
+                                  {layer.result.passed === true ? <Check size={14} className="text-emerald-500 mx-auto" /> :
+                                   layer.result.passed === false ? <X size={14} className="text-red-500 mx-auto" /> :
+                                   <Minus size={14} className="text-slate-400 mx-auto" />}
+                                </td>
+                                <td className="px-2 py-1.5 text-center font-mono">
+                                  {layer.result.score !== null ? layer.result.score : 'N/A'}
+                                </td>
+                                <td className="px-2 py-1.5">{layer.result.detail}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {data.validation && data.validation.grok_agreement.passed === false && data.validation.grok_explanation && (
+                  <div className="bg-amber-50 rounded-lg border border-amber-200 p-3 mt-3">
+                    <div className="flex items-center gap-1.5 mb-1.5 text-amber-800 font-semibold text-xs">
+                      <AlertTriangle size={14} />
+                      Second Opinion
+                    </div>
+                    <div className="text-xs text-amber-900 leading-relaxed mb-2">
+                      {data.validation.grok_explanation}
+                    </div>
+                    <div className="text-[10px] text-amber-700 italic">
+                      Grok identified a different fraud pattern. Review both explanations before making a decision.
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
