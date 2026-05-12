@@ -1,3 +1,6 @@
+# Cursor workspace metadata (keep local only)
+.cursor/
+
 project-notes/
 .venv/
 .env

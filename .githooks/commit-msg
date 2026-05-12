@@ -1,0 +1,16 @@
+#!/bin/sh
+# Drop Cursor-related Co-authored-by trailers so they never enter history.
+# Cursor Settings > Agent > Attribution can append these; this hook is a repo-level backstop.
+msg_file="$1"
+tmp="${msg_file}.stripcursor.$$"
+awk '
+{
+  line = $0
+  l = tolower(line)
+  if (l ~ /^[[:space:]]*co-authored-by:/) {
+    if (l ~ /cursor/) next
+  }
+  print line
+}
+' "$msg_file" > "$tmp" && mv "$tmp" "$msg_file"
+exit 0
